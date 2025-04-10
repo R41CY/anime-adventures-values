@@ -3,6 +3,7 @@ name: Daily Anime Adventures Value Scrape
 on:
   schedule:
     - cron: '0 9 * * *'
+  workflow_dispatch:
 
 jobs:
   scrape:
