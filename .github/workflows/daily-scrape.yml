@@ -2,8 +2,8 @@ name: Daily Anime Adventures Value Scrape
 
 on:
   schedule:
-    - cron: '0 9 * * *'
-  workflow_dispatch:
+    - cron: '0 9 * * *'  # Runs at 9:00 AM UTC daily
+  workflow_dispatch:      # Allows manual triggering
 
 jobs:
   scrape:
@@ -15,19 +15,37 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.x'
+          python-version: '3.10'  # Specify a specific version for consistency
+
+      - name: Install Chrome
+        run: |
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+
+      - name: Install ChromeDriver
+        run: |
+          CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d '.' -f 1)
+          CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION")
+          wget -q "https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip"
+          unzip chromedriver_linux64.zip
+          sudo mv chromedriver /usr/bin/chromedriver
+          sudo chmod +x /usr/bin/chromedriver
 
       - name: Install dependencies
-        run: pip install requests beautifulsoup4
+        run: |
+          pip install --upgrade pip
+          pip install requests beautifulsoup4 selenium pandas openpyxl xlsxwriter
 
       - name: Run scraper
-        run: python scrape_anime_adventures_values.py
+        run: python anime_adventures_excel_report.py
 
-      - name: Commit CSV
+      - name: Commit changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add all_tradeable_values.csv
+          git add Anime_Adventures_Value_List*.xlsx
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else

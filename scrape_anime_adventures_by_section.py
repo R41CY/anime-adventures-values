@@ -10,6 +10,7 @@ import re
 import requests
 import time
 import os
+import glob
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -29,7 +30,24 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 BASE_URL = "https://animeadventures.fandom.com/wiki/Value_List"
-OUTPUT_EXCEL = "Anime_Adventures_Value_List.xlsx"
+OUTPUT_EXCEL_PATTERN = "Anime_Adventures_Value_List{}.xlsx"
+
+def get_next_file_number():
+    """Find the next available file number by checking existing files"""
+    existing_files = glob.glob("Anime_Adventures_Value_List*.xlsx")
+    if not existing_files:
+        return 1
+    
+    # Extract numbers from existing filenames
+    numbers = []
+    pattern = re.compile(r"Anime_Adventures_Value_List(\d+)\.xlsx")
+    for filename in existing_files:
+        match = pattern.match(filename)
+        if match:
+            numbers.append(int(match.group(1)))
+    
+    # Return the next number in sequence
+    return max(numbers) + 1 if numbers else 1
 
 # Define color schemes for categories
 COLOR_SCHEMES = {
@@ -165,18 +183,24 @@ def clean_and_format_data(data):
                 continue
                 
             # Process file names and character names
-            if key.lower() in ["e", "d", "name"] and value.startswith("File:"):
-                # Extract character name from file name: File:Name.pngName
-                file_match = re.match(r"File:(.*?)\.png(.*)", value)
+            if key.lower() in ["e", "d", "name"] and "File:" in value:
+                # Extract character name from file name: File:Name.png
+                file_match = re.match(r".*?File:(.*?)\.png(.*)", value)
                 if file_match:
                     file_name, char_name = file_match.groups()
-                    new_row["File Name"] = file_name
-                    new_row["Character Name"] = char_name if char_name else file_name
+                    new_row["File Name"] = file_name.strip()
+                    # Use char_name if available, otherwise use file_name but without duplication
+                    if char_name and char_name.strip():
+                        new_row["Character Name"] = char_name.strip()
+                    else:
+                        new_row["Character Name"] = file_name.strip()
                 else:
                     new_row[key] = value
             # Handle values that are just character names (no file indicator)
-            elif key.lower() in ["e", "d", "name"] and not value.startswith("File:"):
-                new_row["Character Name"] = value
+            elif key.lower() in ["e", "d", "name"] and "File:" not in value:
+                # Remove any duplicate prefixes like "ShinyShiny"
+                clean_value = re.sub(r"(\w+)\1", r"\1", value)
+                new_row["Character Name"] = clean_value
             # Add other columns with better names
             else:
                 # Clean up column names
@@ -193,6 +217,12 @@ def clean_and_format_data(data):
                     elif key == "a" or key == "b" or key == "c":
                         clean_key = "Quantity"
                 new_row[clean_key] = value
+        
+        # Additional cleanup for character names to remove duplicate prefixes
+        if "Character Name" in new_row:
+            char_name = new_row["Character Name"]
+            # Fix duplicate word patterns like "ShinyShiny"
+            new_row["Character Name"] = re.sub(r"(\b\w+)(\1\b)", r"\1", char_name)
         
         cleaned_data.append(new_row)
     
@@ -249,6 +279,20 @@ def determine_categories(data):
         categorized_data.append(new_row)
     
     return categorized_data
+
+def remove_duplicate_prefixes(data):
+    """Remove any duplicate prefixes like 'ShinyShiny' from character names"""
+    for row in data:
+        if "Character Name" in row:
+            # Fix repeating words like "ShinyShiny"
+            char_name = row["Character Name"]
+            # First, handle specific pattern for "ShinyShiny"
+            char_name = re.sub(r"ShinyShiny", "Shiny", char_name)
+            # Then handle any other duplicate word pattern
+            char_name = re.sub(r"(\b\w+)\s+\1\b", r"\1", char_name)
+            # Update the name
+            row["Character Name"] = char_name
+    return data
 
 def create_excel_report(data, filename):
     """Create a professionally formatted Excel report"""
@@ -457,6 +501,11 @@ def create_excel_report(data, filename):
 
 def main():
     try:
+        # Get the next available file number
+        next_file_number = get_next_file_number()
+        output_excel = OUTPUT_EXCEL_PATTERN.format(next_file_number)
+        print(f"Using file name: {output_excel}")
+        
         # Get the page content
         html = get_page_with_selenium()
         
@@ -476,9 +525,12 @@ def main():
         # Categorize items
         categorized_data = determine_categories(cleaned_data)
         
+        # Apply additional cleaning to remove duplicate prefixes
+        final_data = remove_duplicate_prefixes(categorized_data)
+        
         # Create Excel report
         try:
-            create_excel_report(categorized_data, OUTPUT_EXCEL)
+            create_excel_report(final_data, output_excel)
         except Exception as e:
             print(f"Excel report creation failed: {e}")
             print("Make sure you have required packages installed:")
