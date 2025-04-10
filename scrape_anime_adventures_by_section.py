@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-improved_table_scraper.py
-An improved scraper for Anime Adventures Value List that formats the data
-in a more user-friendly way.
+anime_adventures_excel_report.py
+Creates a professionally formatted Excel report from the Anime Adventures Value List
+with color coding, multiple sheets, and proper organization.
 """
 import csv
 import re
@@ -17,9 +17,32 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+# Make sure these packages are installed:
+# pip install pandas openpyxl xlsxwriter
+
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment, Color
+from openpyxl.styles.differential import DifferentialStyle
+from openpyxl.formatting.rule import Rule
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.table import Table, TableStyleInfo
+
 BASE_URL = "https://animeadventures.fandom.com/wiki/Value_List"
-OUTPUT_CSV = "anime_adventures_values_improved.csv"
-EXCEL_OUTPUT = "anime_adventures_values.xlsx"
+OUTPUT_EXCEL = "Anime_Adventures_Value_List.xlsx"
+
+# Define color schemes for categories
+COLOR_SCHEMES = {
+    "S Tier": {"header": "1F4E78", "cell": "D6E5F3"},
+    "A Tier": {"header": "375623", "cell": "E2EFDA"},
+    "B Tier": {"header": "833C0B", "cell": "FFF2CC"},
+    "C Tier": {"header": "7030A0", "cell": "E4D2F2"},
+    "C- Tier": {"header": "7030A0", "cell": "E4D2F2"},
+    "Secret Units": {"header": "C00000", "cell": "FFCCCC"},
+    "Game Pass": {"header": "FFC000", "cell": "FFF2CC"},
+    "Relics": {"header": "4472C4", "cell": "D6E5F3"},
+    "Default": {"header": "404040", "cell": "F2F2F2"}
+}
 
 def get_page_with_selenium():
     """Use Selenium to load the page with JavaScript execution"""
@@ -130,21 +153,20 @@ def extract_all_tables(html):
     return all_data
 
 def clean_and_format_data(data):
-    """Clean and format the data for better readability"""
+    """Clean and format the data for better readability and organization"""
     cleaned_data = []
     
-    # Identify key columns based on what we have
     for row in data:
         new_row = {"Section": row.get("Section", "Unknown")}
         
-        # Clean up file names and extract character names
+        # Handle non-standard column names
         for key, value in row.items():
             if key == "Section":
                 continue
                 
-            # Handle file name and character name extraction
+            # Process file names and character names
             if key.lower() in ["e", "d", "name"] and value.startswith("File:"):
-                # Extract character name from file name pattern: File:Name.pngName
+                # Extract character name from file name: File:Name.pngName
                 file_match = re.match(r"File:(.*?)\.png(.*)", value)
                 if file_match:
                     file_name, char_name = file_match.groups()
@@ -155,7 +177,7 @@ def clean_and_format_data(data):
             # Handle values that are just character names (no file indicator)
             elif key.lower() in ["e", "d", "name"] and not value.startswith("File:"):
                 new_row["Character Name"] = value
-            # Add all other columns
+            # Add other columns with better names
             else:
                 # Clean up column names
                 clean_key = key
@@ -168,6 +190,8 @@ def clean_and_format_data(data):
                         clean_key = "Status"
                     elif key == "l" or key == "m":
                         clean_key = "Value"
+                    elif key == "a" or key == "b" or key == "c":
+                        clean_key = "Quantity"
                 new_row[clean_key] = value
         
         cleaned_data.append(new_row)
@@ -175,7 +199,7 @@ def clean_and_format_data(data):
     return cleaned_data
 
 def determine_categories(data):
-    """Categorize items based on patterns"""
+    """Categorize items based on patterns and data"""
     categorized_data = []
     
     for row in data:
@@ -185,6 +209,7 @@ def determine_categories(data):
         character_name = row.get("Character Name", "")
         file_name = row.get("File Name", "")
         tier = row.get("Tier", "").upper()
+        status = row.get("Status", "").lower()
         
         # Default category is the section name
         category = row.get("Section", "Unknown")
@@ -205,92 +230,230 @@ def determine_categories(data):
                  for keyword in ["gamepass", "game pass"]):
             category = "Game Pass"
         
+        # Try to determine rarity if not already set
+        if "Rarity" not in new_row:
+            if tier == "S":
+                new_row["Rarity"] = "Legendary"
+            elif tier == "A":
+                new_row["Rarity"] = "Epic"
+            elif tier == "B":
+                new_row["Rarity"] = "Rare"
+            elif tier in ["C", "C-"]:
+                new_row["Rarity"] = "Common"
+        
+        # Set stability if not already there
+        if "Status" not in new_row and "stable" in status:
+            new_row["Status"] = "Stable"
+        
         new_row["Category"] = category
         categorized_data.append(new_row)
     
     return categorized_data
 
-def save_to_csv(data, filename):
-    """Save the extracted data to a CSV file"""
+def create_excel_report(data, filename):
+    """Create a professionally formatted Excel report"""
     if not data:
-        print("No data to save")
+        print("No data to export")
         return False
-        
-    # Get all unique column names
-    all_columns = set()
-    for row in data:
-        all_columns.update(row.keys())
     
-    # Define a preferred column order
+    print(f"Creating Excel report: {filename}")
+    
+    # Group data by category
+    categories = {}
+    for row in data:
+        category = row.get("Category", "Other")
+        if category not in categories:
+            categories[category] = []
+        categories[category].append(row)
+    
+    # Create a pandas Excel writer using XlsxWriter as the engine
+    writer = pd.ExcelWriter(filename, engine='xlsxwriter')
+    
+    # Create a DataFrame from all data for the overview sheet
+    df_all = pd.DataFrame(data)
+    
+    # Reorder columns logically
     preferred_columns = [
-        "Section", "Category", "Character Name", "File Name", 
-        "Rarity", "Tier", "Status", "Value"
+        "Character Name", "File Name", "Category", "Tier", "Rarity", 
+        "Status", "Value", "Quantity", "Section"
     ]
     
-    # Create the final column list
-    fieldnames = []
+    # Ensure all columns exist (fill with empty strings if not)
     for col in preferred_columns:
-        if col in all_columns:
-            fieldnames.append(col)
-            all_columns.discard(col)
+        if col not in df_all.columns:
+            df_all[col] = ""
     
-    # Add any remaining columns
-    fieldnames.extend(sorted(all_columns))
+    # Get remaining columns
+    other_columns = [col for col in df_all.columns if col not in preferred_columns]
     
-    # Write to CSV
-    with open(filename, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(data)
+    # Create final column order
+    column_order = preferred_columns + other_columns
     
-    print(f"Saved {len(data)} rows to {filename}")
+    # Reorder DataFrame columns
+    df_all = df_all[column_order]
+    
+    # Create the overview sheet with all data
+    df_all.to_excel(writer, sheet_name='Overview', index=False)
+    
+    # Get workbook and add a overview worksheet
+    workbook = writer.book
+    
+    # Format for header cells
+    header_format = workbook.add_format({
+        'bold': True,
+        'text_wrap': True,
+        'valign': 'top',
+        'fg_color': '#D9D9D9',
+        'border': 1,
+        'font_size': 12
+    })
+    
+    # Format for category header cells
+    category_format = workbook.add_format({
+        'bold': True,
+        'align': 'center',
+        'valign': 'vcenter',
+        'fg_color': '#4472C4',
+        'font_color': 'white',
+        'border': 1,
+        'font_size': 14
+    })
+    
+    # Overview worksheet formatting
+    overview_sheet = writer.sheets['Overview']
+    overview_sheet.freeze_panes(1, 0)  # Freeze the header row
+    
+    # Set column widths
+    for i, col in enumerate(df_all.columns):
+        # Calculate column width based on column name and max content length
+        max_len = df_all[col].astype(str).map(len).max()
+        col_len = max(max_len, len(col)) + 3  # Add some padding
+        overview_sheet.set_column(i, i, col_len)
+    
+    # Add header formatting
+    for col_num, value in enumerate(df_all.columns.values):
+        overview_sheet.write(0, col_num, value, header_format)
+    
+    # Add category-specific sheets
+    for category, category_data in categories.items():
+        if not category_data:
+            continue
+        
+        # Create safe sheet name (max 31 chars, no special chars)
+        sheet_name = re.sub(r'[\\/*\[\]:?]', '', category)[:31]
+        
+        # Create DataFrame for this category
+        df_category = pd.DataFrame(category_data)
+        
+        # Reorder columns the same way
+        for col in preferred_columns:
+            if col not in df_category.columns:
+                df_category[col] = ""
+        
+        # Get other columns that might be specific to this category
+        cat_other_columns = [col for col in df_category.columns if col not in preferred_columns]
+        
+        # Create final column order for this category
+        cat_column_order = preferred_columns + cat_other_columns
+        
+        # Reorder DataFrame columns
+        df_category = df_category[cat_column_order]
+        
+        # Add data to the sheet
+        df_category.to_excel(writer, sheet_name=sheet_name, index=False)
+        
+        # Format the category sheet
+        category_sheet = writer.sheets[sheet_name]
+        category_sheet.freeze_panes(1, 0)  # Freeze the header row
+        
+        # Get the color scheme for this category
+        color_scheme = COLOR_SCHEMES.get(category, COLOR_SCHEMES["Default"])
+        
+        # Create category-specific header format
+        cat_header_format = workbook.add_format({
+            'bold': True,
+            'text_wrap': True,
+            'valign': 'top',
+            'fg_color': '#' + color_scheme["header"],
+            'font_color': 'white',
+            'border': 1,
+            'font_size': 12
+        })
+        
+        # Create category-specific cell format
+        cat_cell_format = workbook.add_format({
+            'border': 1,
+            'fg_color': '#' + color_scheme["cell"],
+        })
+        
+        # Apply formatting to the header row
+        for col_num, value in enumerate(df_category.columns.values):
+            category_sheet.write(0, col_num, value, cat_header_format)
+        
+        # Set column widths
+        for i, col in enumerate(df_category.columns):
+            max_len = df_category[col].astype(str).map(len).max()
+            col_len = max(max_len, len(col)) + 3
+            category_sheet.set_column(i, i, col_len)
+        
+        # Apply alternating row colors
+        row_count = len(df_category) + 1  # +1 for header
+        category_sheet.add_table(0, 0, row_count-1, len(df_category.columns)-1, {
+            'columns': [{'header': col} for col in df_category.columns],
+            'style': 'Table Style Medium 2',
+            'first_column': True
+        })
+    
+    # Create a Summary sheet
+    summary_data = []
+    for category, category_data in categories.items():
+        summary_data.append({
+            'Category': category,
+            'Count': len(category_data),
+            'Average Value': sum(float(row.get('Value', 0)) for row in category_data if row.get('Value', '').isdigit()) / len(category_data) if category_data else 0
+        })
+    
+    # Sort by count descending
+    summary_data.sort(key=lambda x: x['Count'], reverse=True)
+    
+    # Create summary DataFrame
+    df_summary = pd.DataFrame(summary_data)
+    df_summary.to_excel(writer, sheet_name='Summary', index=False)
+    
+    # Format the summary sheet
+    summary_sheet = writer.sheets['Summary']
+    
+    # Apply formatting to the summary sheet
+    for col_num, value in enumerate(df_summary.columns.values):
+        summary_sheet.write(0, col_num, value, header_format)
+    
+    # Set column widths
+    summary_sheet.set_column(0, 0, 20)  # Category
+    summary_sheet.set_column(1, 1, 10)  # Count
+    summary_sheet.set_column(2, 2, 15)  # Average Value
+    
+    # Add a chart
+    chart = workbook.add_chart({'type': 'column'})
+    
+    # Configure the chart
+    chart.add_series({
+        'name': 'Item Count',
+        'categories': ['Summary', 1, 0, len(summary_data), 0],
+        'values': ['Summary', 1, 1, len(summary_data), 1],
+    })
+    
+    chart.set_title({'name': 'Items by Category'})
+    chart.set_x_axis({'name': 'Category'})
+    chart.set_y_axis({'name': 'Count'})
+    
+    # Insert the chart into the worksheet
+    summary_sheet.insert_chart('E2', chart, {'x_scale': 1.5, 'y_scale': 1.5})
+    
+    # Close the writer
+    writer.close()
+    
+    print(f"Excel report created successfully: {filename}")
     return True
-
-def export_to_excel(data, filename):
-    """Export data to Excel with formatting"""
-    try:
-        import pandas as pd
-        
-        # Convert to pandas DataFrame
-        df = pd.DataFrame(data)
-        
-        # Reorder columns if needed
-        preferred_columns = [
-            "Section", "Category", "Character Name", "File Name", 
-            "Rarity", "Tier", "Status", "Value"
-        ]
-        
-        cols = [col for col in preferred_columns if col in df.columns]
-        other_cols = [col for col in df.columns if col not in preferred_columns]
-        df = df[cols + other_cols]
-        
-        # Write to Excel
-        with pd.ExcelWriter(filename, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Value List')
-            
-            # Access the worksheet
-            workbook = writer.book
-            worksheet = workbook['Value List']
-            
-            # Auto-adjust column width
-            for column in worksheet.columns:
-                max_length = 0
-                column_letter = column[0].column_letter
-                for cell in column:
-                    try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(cell.value)
-                    except:
-                        pass
-                adjusted_width = (max_length + 2)
-                worksheet.column_dimensions[column_letter].width = adjusted_width
-        
-        print(f"Saved formatted Excel to {filename}")
-        return True
-    
-    except ImportError:
-        print("Pandas or openpyxl not available, skipping Excel export")
-        return False
 
 def main():
     try:
@@ -313,16 +476,15 @@ def main():
         # Categorize items
         categorized_data = determine_categories(cleaned_data)
         
-        # Save to CSV
-        save_to_csv(categorized_data, OUTPUT_CSV)
-        
-        # Try to export to Excel if pandas is available
+        # Create Excel report
         try:
-            export_to_excel(categorized_data, EXCEL_OUTPUT)
+            create_excel_report(categorized_data, OUTPUT_EXCEL)
         except Exception as e:
-            print(f"Excel export failed: {e}")
-            print("To enable Excel export, install pandas and openpyxl:")
-            print("pip install pandas openpyxl")
+            print(f"Excel report creation failed: {e}")
+            print("Make sure you have required packages installed:")
+            print("pip install pandas openpyxl xlsxwriter")
+            import traceback
+            traceback.print_exc()
         
     except Exception as e:
         print(f"Error: {e}")
