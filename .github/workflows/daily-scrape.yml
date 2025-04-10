@@ -1,4 +1,4 @@
-name: Daily Anime Adventures Value Scrape
+name: Anime Adventures Value List Scraper
 
 on:
   schedule:
@@ -8,22 +8,25 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write     # Explicitly grant permission to push changes
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Fetch all history for proper git operations
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      # Use browser-actions/setup-chrome instead of manual installation
       - name: Setup Chrome
         uses: browser-actions/setup-chrome@v1
         with:
           chrome-version: stable
 
-      # Use nanasess/setup-chromedriver instead of manual installation
       - name: Setup ChromeDriver
         uses: nanasess/setup-chromedriver@v2
 
@@ -32,23 +35,28 @@ jobs:
           pip install --upgrade pip
           pip install requests beautifulsoup4 selenium pandas openpyxl xlsxwriter
 
-      # Verify Chrome and ChromeDriver installations
-      - name: Check versions
+      - name: Verify Chrome and ChromeDriver
         run: |
           google-chrome --version
           chromedriver --version
 
       - name: Run scraper
         run: python scrape_anime_adventures_by_section.py
+        
+      - name: Check for new files
+        id: check_files
+        run: |
+          if ls Anime_Adventures_Value_List*.xlsx 2>/dev/null; then
+            echo "files_exist=true" >> $GITHUB_OUTPUT
+          else
+            echo "files_exist=false" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Commit changes
+      - name: Commit and push changes
+        if: steps.check_files.outputs.files_exist == 'true'
         run: |
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Anime_Adventures_Value_List*.xlsx
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "Daily update: $(date +'%Y-%m-%d')"
-            git push
-          fi
+          git commit -m "Daily update: $(date +'%Y-%m-%d')"
+          git push
