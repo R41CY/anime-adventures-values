@@ -39,7 +39,7 @@ jobs:
           chromedriver --version
 
       - name: Run scraper
-        run: python anime_adventures_excel_report.py
+        run: python scrape_anime_adventures_by_section.py
 
       - name: Commit changes
         run: |

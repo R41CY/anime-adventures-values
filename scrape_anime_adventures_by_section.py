@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-anime_adventures_excel_report.py
+scrape_anime_adventures_by_section.py
 Creates a professionally formatted Excel report from the Anime Adventures Value List
 with color coding, multiple sheets, and proper organization.
 """
