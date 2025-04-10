@@ -1,0 +1,9 @@
+# Ignore Excel lock/temp files
+~$*.xlsx
+
+# Ignore CSV output files
+*.csv
+
+# Ignore Python caches
+__pycache__/
+*.py[cod]
