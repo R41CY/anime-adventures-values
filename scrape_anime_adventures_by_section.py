@@ -18,9 +18,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-# Make sure these packages are installed:
-# pip install pandas openpyxl xlsxwriter
-
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment, Color
@@ -78,12 +75,10 @@ def get_page_with_selenium():
     try:
         driver.get(BASE_URL)
         print("Waiting for page to load completely...")
-        time.sleep(5)  # Give time for JavaScript to execute
+        time.sleep(5)
         
-        # Print page title to verify we're on the right page
         print(f"Page title: {driver.title}")
         
-        # Wait for tables to be present
         WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.TAG_NAME, "table"))
         )
@@ -189,7 +184,7 @@ def clean_and_format_data(data):
                 if file_match:
                     file_name, char_name = file_match.groups()
                     new_row["File Name"] = file_name.strip()
-                    # Use char_name if available, otherwise use file_name but without duplication
+
                     if char_name and char_name.strip():
                         new_row["Character Name"] = char_name.strip()
                     else:
@@ -201,7 +196,6 @@ def clean_and_format_data(data):
                 # Remove any duplicate prefixes like "ShinyShiny"
                 clean_value = re.sub(r"(\w+)\1", r"\1", value)
                 new_row["Character Name"] = clean_value
-            # Add other columns with better names
             else:
                 # Clean up column names
                 clean_key = key
@@ -221,7 +215,6 @@ def clean_and_format_data(data):
         # Additional cleanup for character names to remove duplicate prefixes
         if "Character Name" in new_row:
             char_name = new_row["Character Name"]
-            # Fix duplicate word patterns like "ShinyShiny"
             new_row["Character Name"] = re.sub(r"(\b\w+)(\1\b)", r"\1", char_name)
         
         cleaned_data.append(new_row)
@@ -284,11 +277,8 @@ def remove_duplicate_prefixes(data):
     """Remove any duplicate prefixes like 'ShinyShiny' from character names"""
     for row in data:
         if "Character Name" in row:
-            # Fix repeating words like "ShinyShiny"
             char_name = row["Character Name"]
-            # First, handle specific pattern for "ShinyShiny"
             char_name = re.sub(r"ShinyShiny", "Shiny", char_name)
-            # Then handle any other duplicate word pattern
             char_name = re.sub(r"(\b\w+)\s+\1\b", r"\1", char_name)
             # Update the name
             row["Character Name"] = char_name
