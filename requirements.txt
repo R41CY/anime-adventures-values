@@ -1,0 +1,11 @@
+# Core dependencies for Anime Adventures Value List Scraper
+requests==2.31.0
+beautifulsoup4==4.12.2
+selenium==4.15.0
+pandas==2.1.3
+openpyxl==3.1.2
+xlsxwriter==3.1.9
+
+# Additional security and utility packages
+html5lib==1.1  # For better HTML parsing
+lxml==4.9.3    # Fast XML and HTML parser
