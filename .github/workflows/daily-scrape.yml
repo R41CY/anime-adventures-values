@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install requests beautifulsoup4 selenium pandas openpyxl xlsxwriter
+          pip install -r requirements.txt
 
       - name: Verify Chrome and ChromeDriver
         run: |
@@ -41,16 +41,32 @@ jobs:
           chromedriver --version
 
       - name: Run scraper
-        run: python scrape_anime_adventures_by_section.py
+        id: scraper
+        run: |
+          python scrape_anime_adventures_by_section.py
+          echo "scraper_exit_code=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
         
       - name: Check for new files
         id: check_files
         run: |
           if ls Anime_Adventures_Value_List*.xlsx 2>/dev/null; then
             echo "files_exist=true" >> $GITHUB_OUTPUT
+            echo "Found Excel files to commit"
           else
             echo "files_exist=false" >> $GITHUB_OUTPUT
+            echo "No Excel files found"
           fi
+
+      - name: Upload error logs if scraper failed
+        if: steps.scraper.outputs.scraper_exit_code != '0'
+        uses: actions/upload-artifact@v3
+        with:
+          name: error-logs
+          path: |
+            debug_page.html
+            error_page_source.html
+          retention-days: 7
 
       - name: Commit and push changes
         if: steps.check_files.outputs.files_exist == 'true'
@@ -58,5 +74,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Anime_Adventures_Value_List*.xlsx
-          git commit -m "Daily update: $(date +'%Y-%m-%d')"
-          git push
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Daily update: $(date +'%Y-%m-%d')"
+            git push
+          fi

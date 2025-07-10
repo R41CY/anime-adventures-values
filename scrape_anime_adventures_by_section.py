@@ -11,12 +11,20 @@ import requests
 import time
 import os
 import glob
+import logging
+import html
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+try:
+    from selenium.common.exceptions import TimeoutException, WebDriverException
+except ImportError:
+    # Fallback for environments where selenium might not be fully available
+    TimeoutException = Exception
+    WebDriverException = Exception
 
 import pandas as pd
 from openpyxl import Workbook
@@ -26,25 +34,52 @@ from openpyxl.formatting.rule import Rule
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 BASE_URL = "https://animeadventures.fandom.com/wiki/Value_List"
 OUTPUT_EXCEL_PATTERN = "Anime_Adventures_Value_List{}.xlsx"
 
+def sanitize_input(text):
+    """Sanitize input text to prevent injection attacks"""
+    if not isinstance(text, str):
+        return str(text) if text is not None else ""
+    
+    # Remove potentially dangerous characters
+    text = html.escape(text)
+    
+    # Remove or replace problematic characters
+    text = re.sub(r'[<>"\']', '', text)
+    
+    # Limit length to prevent extremely long inputs
+    if len(text) > 1000:
+        text = text[:1000] + "..."
+    
+    return text.strip()
+
+def validate_data_row(row_data):
+    """Validate and sanitize a data row"""
+    validated_row = {}
+    
+    for key, value in row_data.items():
+        # Sanitize the key
+        clean_key = sanitize_input(str(key))
+        # Sanitize the value
+        clean_value = sanitize_input(str(value))
+        
+        # Skip completely empty or invalid entries
+        if clean_key and clean_value:
+            validated_row[clean_key] = clean_value
+    
+    return validated_row
+
 def get_next_file_number():
     """Find the next available file number by checking existing files"""
-    existing_files = glob.glob("Anime_Adventures_Value_List*.xlsx")
-    if not existing_files:
-        return 1
-    
-    # Extract numbers from existing filenames
-    numbers = []
-    pattern = re.compile(r"Anime_Adventures_Value_List(\d+)\.xlsx")
-    for filename in existing_files:
-        match = pattern.match(filename)
-        if match:
-            numbers.append(int(match.group(1)))
-    
-    # Return the next number in sequence
-    return max(numbers) + 1 if numbers else 1
+    # Start from 1 and find the first available number
+    number = 1
+    while os.path.exists(f"Anime_Adventures_Value_List{number}.xlsx"):
+        number += 1
+    return number
 
 # Define color schemes for categories
 COLOR_SCHEMES = {
@@ -61,33 +96,54 @@ COLOR_SCHEMES = {
 
 def get_page_with_selenium():
     """Use Selenium to load the page with JavaScript execution"""
-    print("Launching Chrome to fetch dynamic content...")
+    logging.info("Launching Chrome to fetch dynamic content...")
     
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option('useAutomationExtension', False)
     
-    # Initialize the Chrome driver
-    driver = webdriver.Chrome(options=chrome_options)
-    
+    driver = None
     try:
+        # Initialize the Chrome driver
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        
+        logging.info(f"Navigating to {BASE_URL}")
         driver.get(BASE_URL)
-        print("Waiting for page to load completely...")
-        time.sleep(5)
         
-        print(f"Page title: {driver.title}")
+        logging.info("Waiting for page to load completely...")
         
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.TAG_NAME, "table"))
-        )
+        # Wait for tables to be present and loaded
+        wait = WebDriverWait(driver, 30)
+        wait.until(EC.presence_of_element_located((By.TAG_NAME, "table")))
+        
+        # Additional wait for dynamic content to load
+        wait.until(lambda d: len(d.find_elements(By.TAG_NAME, "table")) > 0)
+        
+        logging.info(f"Page title: {driver.title}")
         
         html = driver.page_source
-        print(f"HTML length: {len(html)} characters")
+        logging.info(f"HTML length: {len(html)} characters")
         return html
+        
+    except Exception as e:
+        logging.error(f"Error in Selenium page fetch: {e}")
+        if driver:
+            logging.info("Saving page source for debugging...")
+            try:
+                with open("error_page_source.html", "w", encoding="utf-8") as f:
+                    f.write(driver.page_source)
+            except Exception:
+                pass
+        raise
     finally:
-        driver.quit()
+        if driver:
+            driver.quit()
 
 def extract_all_tables(html):
     """Extract all tables from the HTML"""
@@ -158,7 +214,11 @@ def extract_all_tables(html):
             
             # Add the section name
             row_data["Section"] = section_name
-            table_data.append(row_data)
+            
+            # Validate and sanitize the row data
+            validated_row = validate_data_row(row_data)
+            if validated_row:  # Only add if validation passes
+                table_data.append(validated_row)
         
         print(f"Extracted {len(table_data)} rows from {section_name}")
         all_data.extend(table_data)
@@ -278,8 +338,12 @@ def remove_duplicate_prefixes(data):
     for row in data:
         if "Character Name" in row:
             char_name = row["Character Name"]
-            char_name = re.sub(r"ShinyShiny", "Shiny", char_name)
+            # Fix: Handle consecutive duplicate words without spaces (e.g., "ShinyShiny")
+            char_name = re.sub(r"(\w+)\1+", r"\1", char_name)
+            # Also handle duplicate words with spaces
             char_name = re.sub(r"(\b\w+)\s+\1\b", r"\1", char_name)
+            # Specific fix for common duplications
+            char_name = re.sub(r"ShinyShiny", "Shiny", char_name)
             # Update the name
             row["Character Name"] = char_name
     return data
@@ -490,48 +554,85 @@ def create_excel_report(data, filename):
     return True
 
 def main():
+    """Main function with comprehensive error handling"""
     try:
         # Get the next available file number
         next_file_number = get_next_file_number()
         output_excel = OUTPUT_EXCEL_PATTERN.format(next_file_number)
-        print(f"Using file name: {output_excel}")
+        logging.info(f"Using file name: {output_excel}")
         
         # Get the page content
-        html = get_page_with_selenium()
+        try:
+            html = get_page_with_selenium()
+        except Exception as e:
+            logging.error(f"Failed to fetch page content: {e}")
+            raise
         
         # Extract table data
-        all_data = extract_all_tables(html)
-        
-        if not all_data:
-            print("\nNo data extracted. Saving the HTML for inspection...")
+        try:
+            all_data = extract_all_tables(html)
+        except Exception as e:
+            logging.error(f"Failed to extract table data: {e}")
+            logging.info("Saving HTML for debugging...")
             with open("debug_page.html", "w", encoding="utf-8") as f:
                 f.write(html)
-            print("HTML saved to debug_page.html")
-            return
+            raise
         
-        # Clean and format the data
-        cleaned_data = clean_and_format_data(all_data)
+        if not all_data:
+            logging.warning("No data extracted. Saving the HTML for inspection...")
+            with open("debug_page.html", "w", encoding="utf-8") as f:
+                f.write(html)
+            logging.info("HTML saved to debug_page.html")
+            return False
         
-        # Categorize items
-        categorized_data = determine_categories(cleaned_data)
+        logging.info(f"Extracted {len(all_data)} total data rows")
         
-        # Apply additional cleaning to remove duplicate prefixes
-        final_data = remove_duplicate_prefixes(categorized_data)
+        # Process data through pipeline
+        try:
+            # Clean and format the data
+            cleaned_data = clean_and_format_data(all_data)
+            logging.info(f"Cleaned data: {len(cleaned_data)} rows")
+            
+            # Categorize items
+            categorized_data = determine_categories(cleaned_data)
+            logging.info(f"Categorized data: {len(categorized_data)} rows")
+            
+            # Apply additional cleaning to remove duplicate prefixes
+            final_data = remove_duplicate_prefixes(categorized_data)
+            logging.info(f"Final processed data: {len(final_data)} rows")
+            
+        except Exception as e:
+            logging.error(f"Data processing pipeline failed: {e}")
+            raise
         
         # Create Excel report
         try:
-            create_excel_report(final_data, output_excel)
+            success = create_excel_report(final_data, output_excel)
+            if success:
+                logging.info(f"Successfully created Excel report: {output_excel}")
+                return True
+            else:
+                logging.error("Excel report creation returned failure")
+                return False
+                
+        except ImportError as e:
+            logging.error(f"Missing required packages for Excel creation: {e}")
+            logging.info("Install required packages with: pip install pandas openpyxl xlsxwriter")
+            return False
         except Exception as e:
-            print(f"Excel report creation failed: {e}")
-            print("Make sure you have required packages installed:")
-            print("pip install pandas openpyxl xlsxwriter")
+            logging.error(f"Excel report creation failed: {e}")
             import traceback
-            traceback.print_exc()
+            logging.error(traceback.format_exc())
+            return False
         
+    except KeyboardInterrupt:
+        logging.info("Script interrupted by user")
+        return False
     except Exception as e:
-        print(f"Error: {e}")
+        logging.error(f"Unexpected error: {e}")
         import traceback
-        traceback.print_exc()
+        logging.error(traceback.format_exc())
+        return False
 
 if __name__ == "__main__":
     main()
