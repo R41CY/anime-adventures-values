@@ -60,7 +60,7 @@ jobs:
 
       - name: Upload error logs if scraper failed
         if: steps.scraper.outputs.scraper_exit_code != '0'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: error-logs
           path: |
